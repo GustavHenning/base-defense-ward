@@ -20,8 +20,9 @@ developer's own r2modman profiles, the game folder's BepInEx, or their real char
 2. Read the real API before patching: `tools\decompile.ps1` writes `.decomp\` (git-ignored). Field names change between game versions; grep there, don't guess.
 3. Build: `dotnet build mods\base-defense-ward\BaseDefenseWard.csproj -c Release` (and the harness).
 4. Test: `tools\test-e2e.ps1` builds both, launches, waits ~55 s, drives the game over the socket, screenshots to `tools\out\`, quits. Exit code 0 = pass.
-5. Ad-hoc: `tools\vh.ps1 "state"`, `"pieces <filter>"`, `"place <prefab> 0 4"`, `"near 10"`, `"toggle"`, `"console <devcommand>"`, `"screenshot <path>"`, `"quit"`. Read `tools\out\*.png` to see what the game shows.
-6. Log: `<profile>\BepInEx\LogOutput.log`. Harmony/plugin errors appear there; check it after every run.
+5. Ad-hoc: `tools\vh.ps1 "state"`, `"pieces <filter>"`, `"place <prefab> 0 4"` (raw instantiate), `"build <prefab> 0 4"` (real Player.PlacePiece path), `"tryplace <prefab>"`, `"near 10"`, `"chars 60"`, `"items 10"`, `"destroy <filter>"`, `"toggle"`, `"keys"`, `"bossstone eikthyr true"`, `"console <devcommand>"`, `"screenshot <path>"`, `"quit"`. Read `tools\out\*.png` to see what the game shows.
+   `"mod <cmd>"` forwards to the mod's own `Plugin.DebugCommand` (status, skip <s>, mobs, kill, wards, hud, cfg [key value], sample, reward, setkey…). Timers are shortened with `mod cfg`, never by editing the shipped defaults.
+6. Log: `<profile>\BepInEx\LogOutput.log`. Harmony/plugin errors appear there; check it after every run. It is flushed lazily, so assert on mod state (via `mod …`) rather than on log lines where possible.
 7. Package: `tools\package.ps1` → `dist\`.
 
 ## Gotchas
@@ -30,6 +31,11 @@ developer's own r2modman profiles, the game folder's BepInEx, or their real char
 - Materials: use `renderer.materials` (instances) when recolouring a clone so the vanilla piece is unaffected.
 - `PlatformManager` lives in namespace `Splatform`. `PrivateArea.IsEnabled/SetEnabled` are private; use Harmony `AccessTools`.
 - Vanilla ward prefab is `guard_stone`; the in-game name is "Ward" (not totem).
+- Challenge logic runs only on the ZDO owner. If every player leaves the active area the ward's ZDO is unowned and the challenge pauses; tests must stay within ~100 m of the ward.
+- Boss stones have an empty `m_setsWorldKey`; the mod mirrors "trophy hung" into `bdw_hung_<boss>` global keys via a `BossStone.SetActivated` postfix. Key-value global keys are set as `"name value"`; remove before re-setting to update a value.
+- `ItemDrop.DropItem` needs `m_itemData.m_dropPrefab` set on never-instantiated prefabs. `Game.Logout(save:false)` still saves; for a no-save exit call the private `Game.Shutdown(false)` then `SystemResourceManager.FastLoadScene(m_startScene)`.
+- HUD elements: parent next to `Minimap.instance.m_smallRoot` and keep the updating component on an always-active holder; `SetActive(false)` on the same object stops its `Update`.
+- Test character `devtest` never gets the valkyrie intro (the harness clears `m_firstSpawn`).
 
 ## Contributions
 Commits are authored by the human developer only. Do not add AI co-author trailers or attribution lines.

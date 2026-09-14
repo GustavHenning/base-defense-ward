@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
@@ -18,19 +19,77 @@ namespace BaseDefenseWard
         public const string PrefabName = "BaseDefenseWard";
         public const string SourcePrefab = "guard_stone";
 
-        public static readonly Color GlowColor = new Color(0.2f, 0.5f, 1f);
+        public static readonly Color GlowColor = new Color(0.9f, 0.35f, 0.4f);
         public static ManualLogSource Log;
         public static GameObject WardPrefab;
         private static GameObject _holder;
 
+        public static Plugin Instance;
+
         private void Awake()
         {
+            Instance = this;
             Log = Logger;
+            Cfg.Bind(Config);
             Log.LogInfo($"{NAME} {VERSION} loading");
             _holder = new GameObject("BaseDefenseWard_PrefabHolder");
             _holder.SetActive(false);
             DontDestroyOnLoad(_holder);
             new Harmony(GUID).PatchAll(Assembly.GetExecutingAssembly());
+        }
+
+        private void Update() => Deadline.Tick(Time.deltaTime);
+
+        // Entry point for external tooling (dev harness calls this via reflection). Returns a text report.
+        public static string DebugCommand(string line)
+        {
+            var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var cmd = parts.Length > 0 ? parts[0] : "";
+            var p = Player.m_localPlayer;
+            switch (cmd)
+            {
+                case "status":
+                {
+                    var w = p != null ? WardChallenge.Nearest(p.transform.position) : WardChallenge.All.FirstOrDefault();
+                    return (w == null ? "no ward nearby" : w.Status()) + "\n" + Progress.Summary() + "\n" + Deadline.Status();
+                }
+                case "skip": // skip <seconds>: fast-forward this ward's timers by pushing its start stamps back
+                {
+                    var w = WardChallenge.Nearest(p.transform.position);
+                    if (w == null) return "no ward nearby";
+                    long s = long.Parse(parts[1]);
+                    var z = w.GetComponent<ZNetView>().GetZDO();
+                    foreach (var h in new[] { "bdw_start", "bdw_wavestart" }) { int hh = h.GetStableHashCode(); if (z.GetLong(hh) > 0) z.Set(hh, z.GetLong(hh) - s); }
+                    return "skipped " + s;
+                }
+                case "mobs":
+                {
+                    var w = WardChallenge.Nearest(p.transform.position);
+                    if (w == null) return "no ward nearby";
+                    return string.Join("\n", w.AliveMobs().Select(c => $"{c.gameObject.name}\t{c.GetHealth():0}/{c.GetMaxHealth():0}\t{Vector3.Distance(c.transform.position, w.transform.position):0}m hunt={c.GetComponent<MonsterAI>()?.HuntPlayer()}")) + $"\ncount={w.AliveMobs().Count}";
+                }
+                case "kill": // kill every mob of the nearest ward's wave, wherever they are
+                {
+                    var w = WardChallenge.Nearest(p.transform.position);
+                    if (w == null) return "no ward nearby";
+                    int n = 0;
+                    foreach (var c in w.AliveMobs()) { var hit = new HitData(); hit.m_damage.m_damage = 1e10f; c.Damage(hit); n++; }
+                    return "killed " + n;
+                }
+                case "setcompleted": Progress.SetCompleted(int.Parse(parts[1])); return Progress.Summary();
+                case "setkey": ZoneSystem.instance.SetGlobalKey(parts[1]); return Progress.Summary();
+                case "removekey": ZoneSystem.instance.RemoveGlobalKey(parts[1]); return Progress.Summary();
+                case "sample": return string.Join(",", MobPool.Sample(int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]), new System.Random()));
+                case "reward": return string.Join(",", MobPool.RewardFor(int.Parse(parts[1]), int.Parse(parts[2])).Select(r => r.prefab + "x" + r.amount));
+                case "cfg":
+                    if (parts.Length == 3) { var e = Instance.Config.Where(kv => kv.Key.Key == parts[1]).Select(kv => kv.Value).FirstOrDefault(); if (e == null) return "no such key"; e.SetSerializedValue(parts[2]); }
+                    return string.Join("\n", Instance.Config.Select(kv => $"{kv.Key.Key}={kv.Value.GetSerializedValue()}"));
+                case "hud": return WardHud.Instance == null ? "no hud" : $"visible={WardHud.Instance.Visible} text={WardHud.Instance.CurrentText}";
+                case "wards": // every ward ZDO of the local player, loaded or not
+                    return string.Join("\n", OnePerPlayer.WardsOf(p.GetPlayerID()).Select(z => $"{z.m_uid} state={(ChallengeState)z.GetInt("bdw_state".GetStableHashCode())} pos={z.GetPosition()}")) + $"\ncount={OnePerPlayer.WardsOf(p.GetPlayerID()).Count} removed={OnePerPlayer.RemovedCount} blocked={OnePerPlayer.BlockedCount}";
+                case "reset": WorldReset.Schedule("debug"); return "scheduled";
+                default: return "unknown: status skip <s> mobs setcompleted <n> setkey <k> removekey <k> sample <n> <tier> <completed> reward <tier> <completed> cfg [key value] reset";
+            }
         }
 
 
@@ -52,8 +111,12 @@ namespace BaseDefenseWard
 
                 var piece = WardPrefab.GetComponent<Piece>();
                 piece.m_name = "Base Defense Ward";
-                piece.m_description = "A ward that glows blue while active.";
+                piece.m_description = "Build it and a wave comes for it. Defend it to earn rewards.";
                 piece.m_resources = Array.Empty<Piece.Requirement>(); // free, for testing
+                WardPrefab.AddComponent<WardChallenge>();
+                var st = WardPrefab.AddComponent<StaticTarget>();   // lets wave mobs path to and attack the ward itself
+                st.m_primaryTarget = true;
+                st.m_randomTarget = true;
                 var area = WardPrefab.GetComponent<PrivateArea>();
                 if (area != null)
                 {

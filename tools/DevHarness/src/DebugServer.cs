@@ -166,6 +166,28 @@ namespace DevHarness
                     break;
                 }
 
+                case "build":
+                {
+                    // build <prefab> [dx dz] -> places through Player.PlacePiece (the real build path: creator, mod patches), no resources
+                    Need(p);
+                    var g = ZNetScene.instance.GetPrefab(args[0]);
+                    if (g == null) { o.AppendLine("ERROR: prefab not found"); break; }
+                    float dx = args.Length > 1 ? float.Parse(args[1]) : 0f, dz = args.Length > 2 ? float.Parse(args[2]) : 3f;
+                    var pos = p.transform.position + p.transform.forward * dz + p.transform.right * dx;
+                    if (ZoneSystem.instance.GetGroundHeight(pos, out var h)) pos.y = h;
+                    p.PlacePiece(g.GetComponent<Piece>(), pos, Quaternion.LookRotation(-p.transform.forward), false, true);
+                    o.AppendLine($"built {args[0]} at {F(pos)}"); break;
+                }
+
+                case "tryplace":
+                {
+                    // tryplace <prefab> -> Player.TryPlacePiece, i.e. what the hammer click does (mod prefixes run first)
+                    Need(p);
+                    var g = ZNetScene.instance.GetPrefab(args[0]);
+                    if (g == null) { o.AppendLine("ERROR: prefab not found"); break; }
+                    o.AppendLine("result=" + p.TryPlacePiece(g.GetComponent<Piece>())); break;
+                }
+
                 case "near":
                 {
                     Need(p);
@@ -204,6 +226,69 @@ namespace DevHarness
                     foreach (var l in best.GetComponentsInChildren<Light>(true))
                         o.AppendLine($"  light {l.gameObject.name} color={l.color} intensity={l.intensity} active={l.gameObject.activeInHierarchy}");
                     break;
+                }
+
+                case "mod":
+                {
+                    // mod <line> -> calls static string BaseDefenseWard.Plugin.DebugCommand(string) in the mod under test
+                    var t = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("BaseDefenseWard.Plugin")).FirstOrDefault(x => x != null);
+                    if (t == null) { o.AppendLine("ERROR: mod not loaded"); break; }
+                    o.AppendLine((string)t.GetMethod("DebugCommand").Invoke(null, new object[] { rest }));
+                    break;
+                }
+
+                case "chars":
+                {
+                    Need(p);
+                    float r = args.Length > 0 ? float.Parse(args[0]) : 80f;
+                    var list = new List<Character>();
+                    Character.GetCharactersInRange(p.transform.position, r, list);
+                    foreach (var c in list.Where(c => !c.IsPlayer()))
+                        o.AppendLine($"{c.gameObject.name}\t{c.GetHealth():0}/{c.GetMaxHealth():0}\t{F(c.transform.position)}\t{Vector3.Distance(c.transform.position, p.transform.position):0}m");
+                    o.AppendLine($"count={list.Count(c => !c.IsPlayer())}"); break;
+                }
+
+                case "items":
+                {
+                    Need(p);
+                    float r = args.Length > 0 ? float.Parse(args[0]) : 10f;
+                    var drops = UnityEngine.Object.FindObjectsOfType<ItemDrop>().Where(d => Vector3.Distance(d.transform.position, p.transform.position) <= r).ToList();
+                    foreach (var d in drops) o.AppendLine($"{d.gameObject.name}\tx{d.m_itemData.m_stack}\t{F(d.transform.position)}");
+                    o.AppendLine($"count={drops.Count}"); break;
+                }
+
+                case "destroy":
+                {
+                    // destroy [filter] -> WearNTear.Destroy on the nearest piece (optionally name filtered) within 10 m
+                    Need(p);
+                    var filter = args.Length > 0 ? args[0].ToLowerInvariant() : null;
+                    var pcs = new List<Piece>();
+                    Piece.GetAllPiecesInRadius(p.transform.position, 10f, pcs);
+                    var pc = pcs.Where(x => filter == null || x.gameObject.name.ToLowerInvariant().Contains(filter))
+                                .OrderBy(x => Vector3.Distance(x.transform.position, p.transform.position)).FirstOrDefault();
+                    if (pc == null) { o.AppendLine("no piece"); break; }
+                    var wnt = pc.GetComponent<WearNTear>();
+                    if (wnt == null) { o.AppendLine("no WearNTear"); break; }
+                    HarmonyLib.AccessTools.Method(typeof(WearNTear), "Destroy").Invoke(wnt, new object[] { null, false }); // private Destroy(HitData, bool) = a real "destroyed by damage" path
+                    o.AppendLine("destroyed " + pc.gameObject.name); break;
+                }
+
+                case "keys":
+                    o.AppendLine(string.Join("\n", ZoneSystem.instance.GetGlobalKeys())); break;
+
+                case "bossstones":
+                    foreach (var b in UnityEngine.Object.FindObjectsOfType<BossStone>())
+                        o.AppendLine($"{b.gameObject.name}\tkey={b.m_setsWorldKey}\t{F(b.transform.position)}");
+                    break;
+
+                case "bossstone":
+                {
+                    // bossstone <nameFilter> <true|false> -> force a boss stone's activated state (as if a trophy were hung / removed)
+                    var b = UnityEngine.Object.FindObjectsOfType<BossStone>().FirstOrDefault(x => x.gameObject.name.ToLowerInvariant().Contains(args[0].ToLowerInvariant()));
+                    if (b == null) { o.AppendLine("no such boss stone loaded (stand near the sacrificial stones)"); break; }
+                    HarmonyLib.AccessTools.Method(typeof(BossStone), "SetActivated").Invoke(b, new object[] { bool.Parse(args[1]), false });
+                    b.CancelInvoke("UpdateVisual"); // stop the stone reverting to the real item-stand state every second
+                    o.AppendLine($"{b.gameObject.name} activated={args[1]}"); break;
                 }
 
                 case "hover":

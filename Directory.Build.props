@@ -24,6 +24,7 @@
     <Reference Include="$(Managed)\assembly_utils.dll" Private="false" />
     <Reference Include="$(Managed)\assembly_guiutils.dll" Private="false" />
     <Reference Include="$(Managed)\Splatform.dll" Private="false" />
+    <Reference Include="$(Managed)\SoftReferenceableAssets.dll" Private="false" />
     <Reference Include="$(Managed)\UnityEngine.dll" Private="false" />
     <Reference Include="$(Managed)\UnityEngine.CoreModule.dll" Private="false" />
     <Reference Include="$(Managed)\UnityEngine.PhysicsModule.dll" Private="false" />
