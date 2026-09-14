@@ -1,8 +1,8 @@
 {
   "name": "BaseDefenseWard",
-  "version_number": "0.1.0",
+  "version_number": "0.1.1",
   "website_url": "https://github.com/GustavHenning/base-defense-ward",
-  "description": "A ward variant that glows blue while active. Built with the Hammer, same model as the vanilla ward.",
+  "description": "Tower defense for your base: build the ward, survive the wave that comes for it, earn tiered rewards. Mobs hunt exposed players; sheltered ones are ignored.",
   "dependencies": [
     "denikson-BepInExPack_Valheim-5.4.2350"
   ]

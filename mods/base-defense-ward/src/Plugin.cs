@@ -14,7 +14,7 @@ namespace BaseDefenseWard
     {
         public const string GUID = "com.night.basedefenseward";
         public const string NAME = "Base Defense Ward";
-        public const string VERSION = "0.1.0";
+        public const string VERSION = "0.1.1";
 
         public const string PrefabName = "BaseDefenseWard";
         public const string SourcePrefab = "guard_stone";
@@ -38,7 +38,13 @@ namespace BaseDefenseWard
             new Harmony(GUID).PatchAll(Assembly.GetExecutingAssembly());
         }
 
-        private void Update() => Deadline.Tick(Time.deltaTime);
+        private void Update()
+        {
+            Deadline.Tick(Time.deltaTime);
+            WardBoard.Tick(Time.deltaTime);
+            WardPins.Tick(Time.deltaTime);
+            Interaction.Tick();
+        }
 
         // Entry point for external tooling (dev harness calls this via reflection). Returns a text report.
         public static string DebugCommand(string line)
@@ -53,13 +59,13 @@ namespace BaseDefenseWard
                     var w = p != null ? WardChallenge.Nearest(p.transform.position) : WardChallenge.All.FirstOrDefault();
                     return (w == null ? "no ward nearby" : w.Status()) + "\n" + Progress.Summary() + "\n" + Deadline.Status();
                 }
-                case "skip": // skip <seconds>: fast-forward this ward's timers by pushing its start stamps back
+                case "skip": // skip <seconds>: fast-forward the current timer of this ward
                 {
                     var w = WardChallenge.Nearest(p.transform.position);
                     if (w == null) return "no ward nearby";
                     long s = long.Parse(parts[1]);
                     var z = w.GetComponent<ZNetView>().GetZDO();
-                    foreach (var h in new[] { "bdw_start", "bdw_wavestart" }) { int hh = h.GetStableHashCode(); if (z.GetLong(hh) > 0) z.Set(hh, z.GetLong(hh) - s); }
+                    int hs = w.State == ChallengeState.Active ? WardChallenge.HWaveElapsed : WardChallenge.HElapsed; z.Set(hs, z.GetFloat(hs, 0f) + s);
                     return "skipped " + s;
                 }
                 case "mobs":
@@ -84,7 +90,51 @@ namespace BaseDefenseWard
                 case "cfg":
                     if (parts.Length == 3) { var e = Instance.Config.Where(kv => kv.Key.Key == parts[1]).Select(kv => kv.Value).FirstOrDefault(); if (e == null) return "no such key"; e.SetSerializedValue(parts[2]); }
                     return string.Join("\n", Instance.Config.Select(kv => $"{kv.Key.Key}={kv.Value.GetSerializedValue()}"));
-                case "hud": return WardHud.Instance == null ? "no hud" : $"visible={WardHud.Instance.Visible} text={WardHud.Instance.CurrentText}";
+                case "hud": return WardHud.Instance == null ? "no hud" : $"visible={WardHud.Instance.Visible} rows={WardHud.Instance.RowCount} tops={string.Join(",", WardHud.Instance.RowTops.Select(t => t.ToString("0")))} text={WardHud.Instance.CurrentText}";
+                case "pins": return string.Join("\n", WardPins.Describe()) + $"\ncount={WardPins.Count}";
+                case "board": return WardBoard.Describe();
+                case "pause": return Interaction.TogglePause(p) ?? "toggled";   // same path as the hotkey
+                case "startnow": { var w = WardChallenge.Nearest(p.transform.position); return w == null ? "no ward nearby" : (Interaction.StartNow(w) ?? "not in countdown"); }
+                case "hover": { var w = WardChallenge.Nearest(p.transform.position); return w == null ? "no ward nearby" : w.GetComponent<PrivateArea>().GetHoverText().Replace("\n", " / "); }
+                case "interact": // what pressing E on the nearest ward does, plus its hover text
+                {
+                    var w = WardChallenge.Nearest(p.transform.position);
+                    if (w == null) return "no ward nearby";
+                    var area = w.GetComponent<PrivateArea>();
+                    return "result=" + area.Interact(p, false, false) + " hover=" + area.GetHoverText().Replace("\n", " / ");
+                }
+                case "setcreator": // setcreator <playerId>: pretend the nearest ward was built by another player (multiplayer HUD/pin tests)
+                {
+                    var w = WardChallenge.Nearest(p.transform.position);
+                    if (w == null) return "no ward nearby";
+                    var z = w.GetComponent<ZNetView>().GetZDO();
+                    z.Set(ZDOVars.s_creator, long.Parse(parts[1])); z.Set(ZDOVars.s_creatorIndex, -1);
+                    return $"creator={z.GetLong(ZDOVars.s_creator)}";
+                }
+                case "hudrects": // screen rectangles of our rows and the vanilla HUD elements they must not overlap
+                {
+                    var hud = Hud.instance; var mh = MessageHud.instance;
+                    var items = new List<(string, RectTransform)>
+                    {
+                        ("minimap", Minimap.instance?.m_smallRoot?.GetComponent<RectTransform>()),
+                        ("statusEffects", hud?.m_statusEffectListRoot), ("eventBar", hud?.m_eventBar?.GetComponent<RectTransform>()),
+                        ("messageTopLeft", mh?.m_messageText?.rectTransform), ("messageCenter", mh?.m_messageCenterText?.rectTransform),
+                        ("healthPanel", hud?.m_healthPanel), ("guardianPower", hud?.m_gpRoot), ("buildHud", hud?.m_buildHud?.GetComponent<RectTransform>()),
+                        ("saveIcon", hud?.m_saveIcon?.GetComponent<RectTransform>()), ("betaText", hud?.m_betaText?.GetComponent<RectTransform>()),
+                    };
+                    var rows = WardHud.Instance != null ? WardHud.Instance.RowRects().ToList() : new List<RectTransform>();
+                    for (int i = 0; i < rows.Count; i++) items.Add(("row" + i, rows[i]));
+                    Rect R(RectTransform rt) { var c = new Vector3[4]; rt.GetWorldCorners(c); return Rect.MinMaxRect(c[0].x, c[0].y, c[2].x, c[2].y); }
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var (name, rt) in items)
+                    {
+                        if (rt == null) { sb.AppendLine($"{name}\tnull"); continue; }
+                        var r = R(rt);
+                        var overlaps = rows.Where(row => row != rt && row.gameObject.activeInHierarchy && r.Overlaps(R(row))).Select(row => row.name);
+                        sb.AppendLine($"{name}\tactive={rt.gameObject.activeInHierarchy}\tx={r.xMin:0}-{r.xMax:0}\ty={r.yMin:0}-{r.yMax:0}\toverlapsRows={string.Join(",", overlaps)}");
+                    }
+                    return sb.ToString().TrimEnd();
+                }
                 case "wards": // every ward ZDO of the local player, loaded or not
                     return string.Join("\n", OnePerPlayer.WardsOf(p.GetPlayerID()).Select(z => $"{z.m_uid} state={(ChallengeState)z.GetInt("bdw_state".GetStableHashCode())} pos={z.GetPosition()}")) + $"\ncount={OnePerPlayer.WardsOf(p.GetPlayerID()).Count} removed={OnePerPlayer.RemovedCount} blocked={OnePerPlayer.BlockedCount}";
                 case "reset": WorldReset.Schedule("debug"); return "scheduled";
@@ -112,7 +162,7 @@ namespace BaseDefenseWard
                 var piece = WardPrefab.GetComponent<Piece>();
                 piece.m_name = "Base Defense Ward";
                 piece.m_description = "Build it and a wave comes for it. Defend it to earn rewards.";
-                piece.m_resources = Array.Empty<Piece.Requirement>(); // free, for testing
+                // Build cost and workbench requirement are inherited from the vanilla ward (guard_stone).
                 WardPrefab.AddComponent<WardChallenge>();
                 var st = WardPrefab.AddComponent<StaticTarget>();   // lets wave mobs path to and attack the ward itself
                 st.m_primaryTarget = true;
@@ -121,11 +171,11 @@ namespace BaseDefenseWard
                 if (area != null)
                 {
                     area.m_name = "Base Defense Ward";
-                    // Blue glow: a point light that lives under the enabled-effect object, so it only
+                    // Glow: a point light that lives under the enabled-effect object, so it only
                     // shows while the ward is activated (PrivateArea toggles that object on/off).
                     if (area.m_enabledEffect != null)
                     {
-                        foreach (var l in area.m_enabledEffect.GetComponentsInChildren<Light>(true)) { l.color = GlowColor; l.intensity *= 1.5f; }
+                        foreach (var l in area.m_enabledEffect.GetComponentsInChildren<Light>(true)) { l.color = GlowColor; }
                         foreach (var ps in area.m_enabledEffect.GetComponentsInChildren<ParticleSystem>(true))
                         {
                             var main = ps.main; main.startColor = GlowColor;
@@ -144,8 +194,8 @@ namespace BaseDefenseWard
                         var light = glow.AddComponent<Light>();
                         light.type = LightType.Point;
                         light.color = GlowColor;
-                        light.intensity = 3f;
-                        light.range = 8f;
+                        light.intensity = 1.2f;
+                        light.range = 6f;
                         light.shadows = LightShadows.None;
                     }
                 }
@@ -167,7 +217,7 @@ namespace BaseDefenseWard
         }
     }
 
-    // Tint the ward's emission blue on our clone whenever its status refreshes (vanilla ward keeps its own colour
+    // Tint the ward emission on our clone whenever its status refreshes (vanilla ward keeps its own colour
     // because material instances are per-object).
     [HarmonyPatch(typeof(PrivateArea), "UpdateStatus")]
     static class PrivateArea_UpdateStatus

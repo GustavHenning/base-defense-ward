@@ -9,10 +9,9 @@ namespace DevHarness
     [BepInPlugin(GUID, NAME, VERSION)]
     public class HarnessPlugin : BaseUnityPlugin
     {
-        public const string GUID = "com.night.devharness";
+        public const string GUID = "dev.valheim.devharness";
         public const string NAME = "Dev Harness";
-        public const string VERSION = "0.1.0";
-        public const string PrefabName = "BaseDefenseWard"; // prefab under test, reported by `state`
+        public const string VERSION = "0.2.0";
         public const int Port = 52380;
 
         public static ManualLogSource Log;

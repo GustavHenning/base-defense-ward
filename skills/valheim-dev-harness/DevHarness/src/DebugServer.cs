@@ -95,8 +95,9 @@ namespace DevHarness
 
                 case "state":
                     o.AppendLine($"scene={SceneManager.GetActiveScene().name} znet={(ZNet.instance != null)} player={(p != null)} " +
-                                 $"objectdb={(ObjectDB.instance != null)} znetscene={(ZNetScene.instance != null)} cheats={Terminal.m_cheat} " +
-                                 $"wardPrefab={(ZNetScene.instance?.GetPrefab(HarnessPlugin.PrefabName) != null)}");
+                                 $"objectdb={(ObjectDB.instance != null)} znetscene={(ZNetScene.instance != null)} cheats={Terminal.m_cheat}");
+                    // state [prefab...] -> also reports whether each named prefab is registered in ZNetScene
+                    foreach (var name in args) o.AppendLine($"prefab {name}={(ZNetScene.instance?.GetPrefab(name) != null)}");
                     if (p != null) o.AppendLine($"pos={F(p.transform.position)} hp={p.GetHealth():0}/{p.GetMaxHealth():0}");
                     break;
 
@@ -230,10 +231,17 @@ namespace DevHarness
 
                 case "mod":
                 {
-                    // mod <line> -> calls static string BaseDefenseWard.Plugin.DebugCommand(string) in the mod under test
-                    var t = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("BaseDefenseWard.Plugin")).FirstOrDefault(x => x != null);
-                    if (t == null) { o.AppendLine("ERROR: mod not loaded"); break; }
-                    o.AppendLine((string)t.GetMethod("DebugCommand").Invoke(null, new object[] { rest }));
+                    // mod <line> -> forwards to the mod under test: any loaded BepInEx plugin type exposing
+                    // `public static string DebugCommand(string line)`. With several such mods: mod <TypeName> <line>.
+                    var mods = AppDomain.CurrentDomain.GetAssemblies()
+                        .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
+                        .Where(x => x.GetCustomAttributes(typeof(BepInEx.BepInPlugin), false).Length > 0 &&
+                                    x.GetMethod("DebugCommand", new[] { typeof(string) })?.IsStatic == true).ToList();
+                    if (mods.Count == 0) { o.AppendLine("ERROR: no loaded plugin exposes static DebugCommand(string)"); break; }
+                    var target = mods.Count == 1 ? mods[0] : mods.FirstOrDefault(x => x.FullName == args[0] || x.Name == args[0]);
+                    if (target == null) { o.AppendLine("ERROR: several mods expose DebugCommand; use: mod <TypeName> <line>. Loaded: " + string.Join(", ", mods.Select(m => m.FullName))); break; }
+                    if (mods.Count > 1) rest = string.Join(" ", args.Skip(1));
+                    o.AppendLine((string)target.GetMethod("DebugCommand", new[] { typeof(string) }).Invoke(null, new object[] { rest }));
                     break;
                 }
 
@@ -307,6 +315,46 @@ namespace DevHarness
                     o.AppendLine("ok"); break;
                 }
 
+                case "cam":
+                {
+                    // cam <distance> [fov] -> camera distance behind the player (0 = first person) and field of view
+                    var cam = GameCamera.instance;
+                    if (cam == null) { o.AppendLine("ERROR: no camera"); break; }
+                    var dist = HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_distance");
+                    if (args.Length > 0) { var d = float.Parse(args[0]); dist.SetValue(cam, d); cam.m_maxDistance = Mathf.Max(cam.m_maxDistance, d); }
+                    if (args.Length > 1) cam.m_fov = float.Parse(args[1]);
+                    o.AppendLine($"distance={dist.GetValue(cam)} fov={cam.m_fov}"); break;
+                }
+
+                case "freecam":
+                {
+                    // freecam <x y z> <lookX lookY lookZ> -> detach the camera (game free-fly mode) at a position looking at a point;
+                    // freecam off -> back to the player camera. For screenshots without the player model in frame.
+                    var cam = GameCamera.instance;
+                    if (cam == null) { o.AppendLine("ERROR: no camera"); break; }
+                    var ff = HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_freeFly");
+                    if (args.Length == 0 || args[0] == "off") { ff.SetValue(cam, false); o.AppendLine("freecam off"); break; }
+                    var at = new Vector3(float.Parse(args[0]), float.Parse(args[1]), float.Parse(args[2]));
+                    var look = new Vector3(float.Parse(args[3]), float.Parse(args[4]), float.Parse(args[5]));
+                    var dir = (look - at).normalized;
+                    ff.SetValue(cam, true);
+                    HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_freeFlyLockon").SetValue(cam, null);
+                    HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_freeFlyTarget").SetValue(cam, null);
+                    HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_freeFlySavedVel").SetValue(cam, Vector3.zero);
+                    HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_freeFlyYaw").SetValue(cam, Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg);
+                    HarmonyLib.AccessTools.Field(typeof(GameCamera), "m_freeFlyPitch").SetValue(cam, -Mathf.Asin(dir.y) * Mathf.Rad2Deg);
+                    cam.transform.position = at;
+                    o.AppendLine($"freecam at {F(at)} looking at {F(look)}"); break;
+                }
+
+                case "hud":
+                {
+                    // hud on|off -> show or hide the whole in-game HUD (clean screenshots)
+                    if (Hud.instance == null) { o.AppendLine("ERROR: no hud"); break; }
+                    Hud.instance.m_userHidden = args.Length > 0 && args[0] == "off";
+                    o.AppendLine("hud hidden=" + Hud.instance.m_userHidden); break;
+                }
+
                 case "screenshot":
                 {
                     var path = args.Length > 0 ? rest : Path.Combine(Application.persistentDataPath, "hwt_screenshot.png");
@@ -324,7 +372,7 @@ namespace DevHarness
 
                 case "quit": Application.Quit(); o.AppendLine("quitting"); break;
 
-                default: o.AppendLine("unknown command: " + cmd + " (ping state log console cheats pos tp god pieces prefab place near areas hover lookat screenshot menu quit)"); break;
+                default: o.AppendLine("unknown command: " + cmd + " (ping state log console cheats pos tp god pieces prefab place build tryplace near areas toggle mod chars items destroy keys bossstones bossstone hover lookat cam freecam hud screenshot menu quit)"); break;
             }
         }
 
