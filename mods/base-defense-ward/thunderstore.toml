@@ -10,7 +10,7 @@ repository = "https://thunderstore.io"
 [package]
 namespace = "munnas"
 name = "BaseDefenseWard"
-versionNumber = "0.1.1"
+versionNumber = "0.1.2"
 description = "Tower defense for your base: build the ward, survive the wave that comes for it, earn tiered rewards."
 websiteUrl = "https://github.com/GustavHenning/base-defense-ward"
 containsNsfwContent = false

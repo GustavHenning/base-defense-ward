@@ -14,7 +14,7 @@ namespace BaseDefenseWard
     {
         public const string GUID = "com.night.basedefenseward";
         public const string NAME = "Base Defense Ward";
-        public const string VERSION = "0.1.1";
+        public const string VERSION = "0.1.2";
 
         public const string PrefabName = "BaseDefenseWard";
         public const string SourcePrefab = "guard_stone";
