@@ -1,0 +1,35 @@
+# Thunderstore CLI (tcli) config. Publish with:
+#   tcli publish --config-path mods/base-defense-ward/thunderstore.toml --token <API token>
+# The zip built by skills/mod-publishing/scripts/package.ps1 is the source of truth; tcli only uploads it.
+[config]
+schemaVersion = "0.0.1"
+
+[general]
+repository = "https://thunderstore.io"
+
+[package]
+namespace = "GustavHenning"
+name = "BaseDefenseWard"
+versionNumber = "0.1.0"
+description = "Tower defence for your base: build the ward, survive the wave that comes for it, earn tiered rewards."
+websiteUrl = "https://github.com/GustavHenning/base-defense-ward"
+containsNsfwContent = false
+
+[package.dependencies]
+denikson-BepInExPack_Valheim = "5.4.2350"
+
+[build]
+icon = "icon.png"
+readme = "README.md"
+outdir = "../../dist"
+
+[[build.copy]]
+source = "bin/Release/netstandard2.1/BaseDefenseWard.dll"
+target = "plugins/"
+
+[publish]
+repository = "https://thunderstore.io"
+communities = ["valheim"]
+
+[publish.categories]
+valheim = ["gameplay", "building", "enemies"]

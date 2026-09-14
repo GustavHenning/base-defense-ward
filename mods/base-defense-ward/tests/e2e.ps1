@@ -1,11 +1,12 @@
-# End-to-end test against the real game: builds mod + harness, launches into the throwaway DevTest world and
-# drives every feature over the debug socket. Exit code 0 = all checks passed. Screenshots land in tools\out\.
+# End-to-end test for Base Defense Ward against the real game (see TESTING.md): builds mod + harness, launches into the throwaway DevTest world and
+# drives every feature over the debug socket. Exit code 0 = all checks passed. Screenshots land in .out at the repo root.
 # Timers are shortened through the mod's runtime config; nothing outside the dev profile / DevTest saves is touched.
 param([switch]$KeepRunning)
 $ErrorActionPreference = "Continue"
-$root = Split-Path $PSScriptRoot -Parent
-$vh = Join-Path $PSScriptRoot "vh.ps1"
-$out = Join-Path $PSScriptRoot "out"; New-Item -ItemType Directory -Force $out | Out-Null
+$root = Resolve-Path (Join-Path $PSScriptRoot "../../..")          # repo root
+$harness = Join-Path $root "skills/valheim-dev-harness"
+$vh = Join-Path $harness "scripts/vh.ps1"
+$out = Join-Path $root ".out"; New-Item -ItemType Directory -Force $out | Out-Null
 $profile = if ($env:VALHEIM_DEV_PROFILE) { $env:VALHEIM_DEV_PROFILE } else { "$env:APPDATA\r2modmanPlus-local\Valheim\profiles\dev" }
 $log = "$profile\BepInEx\LogOutput.log"
 $worlds = "$env:USERPROFILE\AppData\LocalLow\IronGate\Valheim\worlds_local"
@@ -18,7 +19,7 @@ function Boot {
     Remove-Item "$profile\BepInEx\config\com.night.basedefenseward.cfg" -ErrorAction SilentlyContinue
     # Fresh throwaway world every boot (the harness recreates DevTest); only the test world is touched.
     Get-ChildItem $worlds -Filter "DevTest*" -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse
-    & (Join-Path $PSScriptRoot "run-dev.ps1") | Out-Null
+    & (Join-Path $harness "scripts/run-dev.ps1") | Out-Null
     for ($i = 0; $i -lt 40; $i++) { Start-Sleep 5; $s = V "state"; if ($s -match "player=True") { return $true } }
     return $false
 }
@@ -29,7 +30,7 @@ function FastConfig {
 
 # ---- build ----
 Stop-Game
-foreach ($p in "mods\base-defense-ward\BaseDefenseWard.csproj","tools\DevHarness\DevHarness.csproj") {
+foreach ($p in "mods\base-defense-ward\BaseDefenseWard.csproj","skills/valheim-dev-harness/DevHarness/DevHarness.csproj") {
     $b = dotnet build (Join-Path $root $p) -c Release 2>&1 | Select-String "error CS|Build succeeded"
     if ($b -match "error CS") { $b; Write-Host "FAIL build $p"; exit 1 }
 }
@@ -37,8 +38,8 @@ foreach ($p in "mods\base-defense-ward\BaseDefenseWard.csproj","tools\DevHarness
 # ---- phase A: registration, glow, countdown, wave, AI, win, rewards, progression ----
 Write-Host "`n== Phase A: win path"
 Check "boots into world" (Boot)
-$state = V "state"
-Check "ward prefab registered" ($state -match "wardPrefab=True")
+$state = V "state BaseDefenseWard"
+Check "ward prefab registered" ($state -match "prefab BaseDefenseWard=True")
 Check "ward in Hammer table" ((V "pieces basedefenseward") -match "^BaseDefenseWard")
 V "god" | Out-Null; FastConfig
 $pos = (V "pos") -split " "

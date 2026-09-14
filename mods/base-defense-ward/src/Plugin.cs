@@ -112,7 +112,7 @@ namespace BaseDefenseWard
                 var piece = WardPrefab.GetComponent<Piece>();
                 piece.m_name = "Base Defense Ward";
                 piece.m_description = "Build it and a wave comes for it. Defend it to earn rewards.";
-                piece.m_resources = Array.Empty<Piece.Requirement>(); // free, for testing
+                // Build cost and workbench requirement are inherited from the vanilla ward (guard_stone).
                 WardPrefab.AddComponent<WardChallenge>();
                 var st = WardPrefab.AddComponent<StaticTarget>();   // lets wave mobs path to and attack the ward itself
                 st.m_primaryTarget = true;
@@ -121,11 +121,11 @@ namespace BaseDefenseWard
                 if (area != null)
                 {
                     area.m_name = "Base Defense Ward";
-                    // Blue glow: a point light that lives under the enabled-effect object, so it only
+                    // Glow: a point light that lives under the enabled-effect object, so it only
                     // shows while the ward is activated (PrivateArea toggles that object on/off).
                     if (area.m_enabledEffect != null)
                     {
-                        foreach (var l in area.m_enabledEffect.GetComponentsInChildren<Light>(true)) { l.color = GlowColor; l.intensity *= 1.5f; }
+                        foreach (var l in area.m_enabledEffect.GetComponentsInChildren<Light>(true)) { l.color = GlowColor; }
                         foreach (var ps in area.m_enabledEffect.GetComponentsInChildren<ParticleSystem>(true))
                         {
                             var main = ps.main; main.startColor = GlowColor;
@@ -144,8 +144,8 @@ namespace BaseDefenseWard
                         var light = glow.AddComponent<Light>();
                         light.type = LightType.Point;
                         light.color = GlowColor;
-                        light.intensity = 3f;
-                        light.range = 8f;
+                        light.intensity = 1.2f;
+                        light.range = 6f;
                         light.shadows = LightShadows.None;
                     }
                 }
@@ -167,7 +167,7 @@ namespace BaseDefenseWard
         }
     }
 
-    // Tint the ward's emission blue on our clone whenever its status refreshes (vanilla ward keeps its own colour
+    // Tint the ward emission on our clone whenever its status refreshes (vanilla ward keeps its own colour
     // because material instances are per-object).
     [HarmonyPatch(typeof(PrivateArea), "UpdateStatus")]
     static class PrivateArea_UpdateStatus
