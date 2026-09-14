@@ -1,0 +1,9 @@
+{
+  "name": "BaseDefenseWard",
+  "version_number": "0.1.0",
+  "website_url": "https://github.com/GustavHenning/base-defense-ward",
+  "description": "A ward variant that glows blue while active. Built with the Hammer, same model as the vanilla ward.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2350"
+  ]
+}

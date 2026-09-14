@@ -1,0 +1,42 @@
+<Project>
+  <PropertyGroup>
+    <!-- Override per machine via environment variables VALHEIM_DIR / VALHEIM_DEV_PROFILE, or edit here. -->
+    <ValheimDir Condition="'$(VALHEIM_DIR)' != ''">$(VALHEIM_DIR)</ValheimDir>
+    <ValheimDir Condition="'$(ValheimDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimDir>
+    <ProfileDir Condition="'$(VALHEIM_DEV_PROFILE)' != ''">$(VALHEIM_DEV_PROFILE)</ProfileDir>
+    <ProfileDir Condition="'$(ProfileDir)' == ''">$(APPDATA)\r2modmanPlus-local\Valheim\profiles\dev</ProfileDir>
+    <Managed>$(ValheimDir)\Valheim_Data\Managed</Managed>
+    <BepCore>$(ProfileDir)\BepInEx\core</BepCore>
+
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType>portable</DebugType>
+    <NoWarn>CS0618;CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src\**\*.cs" />
+    <Reference Include="$(BepCore)\BepInEx.dll" Private="false" />
+    <Reference Include="$(BepCore)\0Harmony.dll" Private="false" />
+    <Reference Include="$(Managed)\assembly_valheim.dll" Private="false" />
+    <Reference Include="$(Managed)\assembly_utils.dll" Private="false" />
+    <Reference Include="$(Managed)\assembly_guiutils.dll" Private="false" />
+    <Reference Include="$(Managed)\Splatform.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.ParticleSystemModule.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.ScreenCaptureModule.dll" Private="false" />
+    <Reference Include="$(Managed)\UnityEngine.ImageConversionModule.dll" Private="false" />
+    <Reference Include="$(Managed)\Unity.TextMeshPro.dll" Private="false" />
+  </ItemGroup>
+  <!-- Every project deploys its DLL into the isolated dev profile, never into the game folder or another profile. -->
+  <Target Name="DeployToDevProfile" AfterTargets="Build">
+    <MakeDir Directories="$(ProfileDir)\BepInEx\plugins\$(AssemblyName)" />
+    <Copy SourceFiles="$(TargetPath);$(TargetDir)$(AssemblyName).pdb" DestinationFolder="$(ProfileDir)\BepInEx\plugins\$(AssemblyName)" />
+  </Target>
+</Project>
