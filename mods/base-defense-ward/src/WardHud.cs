@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -7,26 +8,35 @@ using UnityEngine.UI;
 
 namespace BaseDefenseWard
 {
-    // Small panel left of the minimap: ward icon + the countdown that matters right now
-    // (build deadline, time to next wave, or wave status). Reads synced ZDO data, so it works for any peer.
+    // Panel list under the minimap: one row per ward that matters right now, stacked vertically so several
+    // players' timers never overlap. Rows: your own ward (any state), every other player's running ward, or
+    // the build deadline when nobody has built yet. Data comes from WardBoard, so it works at any distance.
     public class WardHud : MonoBehaviour
     {
         public static WardHud Instance;
-        static readonly int HState = "bdw_state".GetStableHashCode();
+        const float RowWidth = 300f, RowHeight = 36f, RowGap = 4f;
 
-        RectTransform _root;
-        Image _icon;
-        TMP_Text _text;
+        class Row { public GameObject Go; public RectTransform Rect; public Image Icon; public TMP_Text Text; }
+
+        RectTransform _holder;
+        readonly List<Row> _rows = new List<Row>();
+        readonly List<string> _lines = new List<string>();
+        Sprite _sprite;
+        Vector2 _anchor;              // top-right corner of the first row
         float _scanTimer;
-        ZDO _myWard;
-        public string CurrentText => _text != null ? _text.text : "";
-        public bool Visible => _root != null && _root.gameObject.activeSelf;
+        TMP_Text _template;
+
+        public string CurrentText => string.Join(" | ", _lines);
+        public int RowCount => _lines.Count;
+        public bool Visible => _lines.Count > 0;
+        public IEnumerable<float> RowTops => _rows.Take(_lines.Count).Select(r => r.Rect.anchoredPosition.y);
+        public IEnumerable<RectTransform> RowRects() => _rows.Take(_lines.Count).Select(r => r.Rect);
 
         public static void Create(Hud hud)
         {
             if (Instance != null || hud == null || hud.m_rootObject == null) return;
-            // The component lives on an always-active holder; the visible panel is a child that gets toggled,
-            // otherwise disabling the panel would also stop this Update().
+            // The component lives on an always-active holder; the rows are children that get toggled,
+            // otherwise disabling a row would also stop this Update().
             var holder = new GameObject("BaseDefenseWardHud", typeof(RectTransform));
             // Sit next to the minimap in its own parent so anchors/scale match it exactly.
             var minimapRoot = Minimap.instance?.m_smallRoot?.GetComponent<RectTransform>();
@@ -34,129 +44,162 @@ namespace BaseDefenseWard
             var hr = holder.GetComponent<RectTransform>();
             hr.anchorMin = new Vector2(0f, 0f); hr.anchorMax = new Vector2(1f, 1f); hr.offsetMin = hr.offsetMax = Vector2.zero;
             Instance = holder.AddComponent<WardHud>();
-            Instance.Build(hud);
+            Instance._holder = hr;
+            Instance._template = hud.m_healthText;
+            Instance.Reposition();
         }
 
-        void Build(Hud hud)
+        Row MakeRow()
         {
-            var panel = new GameObject("Panel", typeof(RectTransform));
+            var panel = new GameObject("Row" + _rows.Count, typeof(RectTransform));
             panel.transform.SetParent(transform, false);
-            _root = panel.GetComponent<RectTransform>();
-            _root.anchorMin = _root.anchorMax = new Vector2(0f, 0f);
-            _root.pivot = new Vector2(1f, 1f);
-            _root.sizeDelta = new Vector2(190f, 36f);
-            Reposition();
-
-            var bg = panel.AddComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.45f);
+            var rect = panel.GetComponent<RectTransform>();
+            rect.anchorMin = rect.anchorMax = new Vector2(0f, 0f);
+            rect.pivot = new Vector2(1f, 1f);
+            rect.sizeDelta = new Vector2(RowWidth, RowHeight);
+            panel.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.45f);
 
             var iconGo = new GameObject("Icon", typeof(RectTransform));
-            iconGo.transform.SetParent(_root, false);
+            iconGo.transform.SetParent(rect, false);
             var ir = iconGo.GetComponent<RectTransform>();
             ir.anchorMin = ir.anchorMax = new Vector2(0f, 0.5f); ir.pivot = new Vector2(0f, 0.5f);
             ir.sizeDelta = new Vector2(32f, 32f); ir.anchoredPosition = new Vector2(4f, 0f);
-            _icon = iconGo.AddComponent<Image>();
-            _icon.sprite = Plugin.WardPrefab?.GetComponent<Piece>()?.m_icon;
-            _icon.preserveAspect = true;
+            var icon = iconGo.AddComponent<Image>();
+            icon.preserveAspect = true;
 
             var textGo = new GameObject("Text", typeof(RectTransform));
-            textGo.transform.SetParent(_root, false);
+            textGo.transform.SetParent(rect, false);
             var tr = textGo.GetComponent<RectTransform>();
             tr.anchorMin = new Vector2(0f, 0f); tr.anchorMax = new Vector2(1f, 1f);
             tr.offsetMin = new Vector2(42f, 2f); tr.offsetMax = new Vector2(-6f, -2f);
-            _text = textGo.AddComponent<TextMeshProUGUI>();
-            var template = hud.m_healthText;
-            if (template != null) { _text.font = template.font; _text.fontSharedMaterial = template.fontSharedMaterial; }
-            _text.fontSize = 17f;
-            _text.color = Color.white;
-            _text.alignment = TextAlignmentOptions.MidlineLeft;
-            _text.enableWordWrapping = false;
-            _text.overflowMode = TextOverflowModes.Ellipsis;
-            panel.SetActive(false);
+            var text = textGo.AddComponent<TextMeshProUGUI>();
+            if (_template != null) { text.font = _template.font; text.fontSharedMaterial = _template.fontSharedMaterial; }
+            text.fontSize = 16f;
+            text.color = Color.white;
+            text.alignment = TextAlignmentOptions.MidlineLeft;
+            text.enableWordWrapping = false;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+
+            var row = new Row { Go = panel, Rect = rect, Icon = icon, Text = text };
+            _rows.Add(row);
+            return row;
         }
 
-        // Put the panel's top-right corner 12 px left of the minimap's top-left corner (in the shared parent's space).
+        // First row's top-right corner sits 8 px under the minimap's bottom-right corner (in the shared parent's
+        // space). The band left of the minimap belongs to the vanilla status-effect icons, so rows go below it.
         void Reposition()
         {
             var mm = Minimap.instance?.m_smallRoot?.GetComponent<RectTransform>();
-            var holder = (RectTransform)transform;
-            if (mm == null || _root == null) { _root.anchoredPosition = new Vector2(holder.rect.width - 280f, holder.rect.height - 14f); return; }
+            if (mm == null) { _anchor = new Vector2(_holder.rect.width - 20f, _holder.rect.height - 160f); return; }
             var corners = new Vector3[4];
-            mm.GetWorldCorners(corners);                       // 1 = top-left
-            var local = holder.InverseTransformPoint(corners[1]);
-            var fromBottomLeft = new Vector2(local.x, local.y) + holder.rect.size * holder.pivot;
-            _root.anchoredPosition = fromBottomLeft + new Vector2(-12f, 0f);
+            mm.GetWorldCorners(corners);                       // 3 = bottom-right
+            var local = _holder.InverseTransformPoint(corners[3]);
+            var fromBottomLeft = new Vector2(local.x, local.y) + _holder.rect.size * _holder.pivot;
+            _anchor = fromBottomLeft + new Vector2(0f, -8f);
         }
 
         void Update()
         {
-            if (_root == null || Player.m_localPlayer == null || ZNet.instance == null || ZDOMan.instance == null) { Hide(); return; }
-            _scanTimer -= Time.deltaTime;
-            if (_scanTimer <= 0f)
+            _lines.Clear();
+            if (Player.m_localPlayer != null && ZNet.instance != null)
             {
-                _scanTimer = 2f; _myWard = FindMyWard(); Reposition();
-                if (_icon.sprite == null) _icon.sprite = Plugin.WardPrefab?.GetComponent<Piece>()?.m_icon; // prefab registers after Hud.Awake
-            }
-
-            double now = ZNet.instance.GetTimeSeconds();
-            string line = null;
-            if (_myWard != null)
-            {
-                var state = (ChallengeState)_myWard.GetInt(HState, 0);
-                switch (state)
+                _scanTimer -= Time.deltaTime;
+                if (_scanTimer <= 0f)
                 {
-                    case ChallengeState.Idle:
-                    case ChallengeState.Countdown:
-                    {
-                        double left = Cfg.CountdownMinutes.Value * 60.0 - _myWard.GetFloat(WardChallenge.HElapsed, 0f);
-                        line = "Wave in " + Fmt(left); break;
-                    }
-                    case ChallengeState.Active:
-                    {
-                        double left = Cfg.WaveTimeLimitMinutes.Value * 60.0 - _myWard.GetFloat(WardChallenge.HWaveElapsed, 0f);
-                        line = "Wave! hold " + Fmt(left); break;
-                    }
-                    case ChallengeState.Won: line = "Ward defended"; break;
-                    case ChallengeState.Lost: line = "Ward lost"; break;
+                    _scanTimer = 2f; Reposition();
+                    if (_sprite == null) _sprite = Plugin.WardPrefab?.GetComponent<Piece>()?.m_icon; // prefab registers after Hud.Awake
                 }
-            }
-            else if (Cfg.BuildDeadlineMinutes.Value > 0f && !Progress.Has(Progress.BuiltKey) && !Progress.Has(Progress.DeadlineFailedKey)
-                     && ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(Progress.WorldStartKey, out var s) && long.TryParse(s, out var start))
-            {
-                line = "Build ward in " + Fmt(Cfg.BuildDeadlineMinutes.Value * 60.0 - (now - start));
+                BuildLines();
             }
 
-            if (line == null) { Hide(); return; }
-            if (!_root.gameObject.activeSelf) _root.gameObject.SetActive(true);
-            _text.text = line;
+            for (int i = 0; i < _lines.Count; i++)
+            {
+                var row = i < _rows.Count ? _rows[i] : MakeRow();
+                if (!row.Go.activeSelf) row.Go.SetActive(true);
+                row.Rect.anchoredPosition = _anchor - new Vector2(0f, i * (RowHeight + RowGap));
+                if (row.Icon.sprite == null) row.Icon.sprite = _sprite;
+                row.Text.text = _lines[i];
+            }
+            for (int i = _lines.Count; i < _rows.Count; i++) if (_rows[i].Go.activeSelf) _rows[i].Go.SetActive(false);
         }
 
-        void Hide() { if (_root != null && _root.gameObject.activeSelf) _root.gameObject.SetActive(false); }
-
-        ZDO FindMyWard()
+        void BuildLines()
         {
             long me = Player.m_localPlayer.GetPlayerID();
-            var all = new List<ZDO>(); int index = 0;
-            while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(Plugin.PrefabName, all, ref index)) { }
-            ZDO best = null;
-            foreach (var z in all)
-            {
-                if (z.GetLong(ZDOVars.s_creator) != me) continue;
-                // Prefer a running challenge over a finished one.
-                int s = z.GetInt(HState, 0);
-                bool running = s == (int)ChallengeState.Countdown || s == (int)ChallengeState.Active || s == (int)ChallengeState.Idle;
-                if (best == null || (running && !IsRunning(best))) best = z;
-            }
-            return best;
+            // Own ward first (any state, so "defended" / "lost" stay visible), then others' running wards.
+            var mine = WardBoard.Entries.Where(e => e.Creator == me).OrderBy(e => WardBoard.IsRunning(e.State) ? 0 : 1).FirstOrDefault();
+            if (mine != null) _lines.Add(Line(mine, "Your ward"));
+            foreach (var e in WardBoard.Entries.Where(e => e.Creator != me && WardBoard.IsRunning(e.State)).OrderBy(e => e.Id.ID))
+                _lines.Add(Line(e, e.Name));
+
+            if (_lines.Count == 0 && Cfg.BuildDeadlineMinutes.Value > 0f && !Progress.Has(Progress.BuiltKey) && !Progress.Has(Progress.DeadlineFailedKey)
+                && ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(Progress.WorldStartKey, out var s) && long.TryParse(s, out var start))
+                _lines.Add("Build ward in " + Fmt(Cfg.BuildDeadlineMinutes.Value * 60.0 - (ZNet.instance.GetTimeSeconds() - start)));
         }
 
-        static bool IsRunning(ZDO z) { int s = z.GetInt(HState, 0); return s <= (int)ChallengeState.Active; }
+        static string Line(WardBoard.Entry e, string who)
+        {
+            string paused = e.Paused ? " (paused)" : "";
+            switch (e.State)
+            {
+                case ChallengeState.Idle:
+                case ChallengeState.Countdown: return $"{who}: wave in {Fmt(e.RemainingNow)}{paused}";
+                case ChallengeState.Active: return $"{who}: hold {Fmt(e.RemainingNow)}";
+                case ChallengeState.Won:
+                case ChallengeState.Resting: return $"{who}: defended, next in {Fmt(e.RemainingNow)}{paused}";
+                case ChallengeState.Lost: return $"{who}: lost";
+                default: return null;
+            }
+        }
 
         static string Fmt(double seconds)
         {
             if (seconds < 0) seconds = 0;
             var t = TimeSpan.FromSeconds(seconds);
             return t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes:00}:{t.Seconds:00}";
+        }
+    }
+
+    // A minimap pin on every running ward (any player's, any distance), removed when the challenge ends or the ward goes.
+    public static class WardPins
+    {
+        static readonly Dictionary<ZDOID, Minimap.PinData> _pins = new Dictionary<ZDOID, Minimap.PinData>();
+        static float _timer;
+
+        public static int Count => _pins.Count;
+        public static IEnumerable<string> Describe() => _pins.Select(kv => $"{kv.Key} {kv.Value.m_name} {kv.Value.m_pos}");
+
+        public static void Tick(float dt)
+        {
+            _timer -= dt;
+            if (_timer > 0f) return;
+            _timer = 2f;
+            var map = Minimap.instance;
+            if (map == null || Player.m_localPlayer == null) { Clear(); return; }
+
+            var running = new HashSet<ZDOID>();
+            foreach (var e in WardBoard.Entries)
+            {
+                if (!WardBoard.IsRunning(e.State)) continue;
+                running.Add(e.Id);
+                string name = e.Name + "'s ward";
+                if (_pins.TryGetValue(e.Id, out var pin) && pin.m_name != name) { map.RemovePin(pin); _pins.Remove(e.Id); pin = null; }
+                if (pin == null)
+                {
+                    pin = map.AddPin(e.Pos, Minimap.PinType.Icon3, name, false, false);
+                    var sprite = Plugin.WardPrefab?.GetComponent<Piece>()?.m_icon;
+                    if (sprite != null) pin.m_icon = sprite;   // marker is created from m_icon on the next pin update
+                    _pins[e.Id] = pin;
+                }
+                else pin.m_pos = e.Pos;
+            }
+            foreach (var id in _pins.Keys.Where(id => !running.Contains(id)).ToList()) { map.RemovePin(_pins[id]); _pins.Remove(id); }
+        }
+
+        public static void Clear()
+        {
+            if (Minimap.instance != null) foreach (var p in _pins.Values) Minimap.instance.RemovePin(p);
+            _pins.Clear();
         }
     }
 

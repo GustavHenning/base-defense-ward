@@ -25,8 +25,11 @@ function Boot {
 }
 function Stop-Game { try { V "quit" | Out-Null } catch {}; Start-Sleep 4; Stop-Process -Name valheim -Force -ErrorAction SilentlyContinue }
 function FastConfig {
-    foreach ($kv in "CountdownMinutes 0.1","SpawnRadius 30","WaveTimeLimitMinutes 3","PlayerHuntRange 15","DeleteWorldOnLoss false","BuildDeadlineMinutes 0") { V "mod cfg $kv" | Out-Null }
+    foreach ($kv in "CountdownMinutes 0.1","SpawnRadius 30","WaveTimeLimitMinutes 3","PlayerHuntRange 15","DeleteWorldOnLoss false","BuildDeadlineMinutes 0","RestMinMinutes 0.5","RestMaxMinutes 0.6") { V "mod cfg $kv" | Out-Null }
 }
+# Position of the nearest ward piece, from the harness "near" listing.
+function WardPos { $l = (V "near 30") | Where-Object { $_ -match "^BaseDefenseWard" } | Select-Object -First 1; if ($l) { ($l -split "`t")[2] -split " " } }
+function GoToWard { $w = WardPos; if ($w) { V "tp $([float]$w[0] + 1.5) $($w[1]) $([float]$w[2] + 1.5)" | Out-Null; Start-Sleep 3 } }
 
 # ---- build ----
 Stop-Game
@@ -61,15 +64,16 @@ Check "wave mobs spawned" (($mobs | Select-Object -Last 1) -match "count=[1-9]")
 # A mob that spawned on the player's side of the ring may legitimately find them; the ones at the ward (< 30 m) must not hunt.
 $atWard = @($mobs | Where-Object { $_ -match "\t([0-9]+)m hunt=" -and [int]$Matches[1] -lt 30 })
 Check "mobs at the ward don't hunt when no player is in range" (($atWard.Count -gt 0) -and (@($atWard -match "hunt=True").Count -eq 0))
-Check "mobs attack the ward (hp < 100% or mobs adjacent)" (($st -match "hp=(\d+)%" -and [int]$Matches[1] -lt 100) -or (($mobs | Where-Object { $_ -match "\t[0-4]m " }).Count -gt 0))
+Check "mobs attack the ward (hp < 100% or mobs adjacent)" ((($st -join " ") -match "hp=(\d+)%" -and [int]$Matches[1] -lt 100) -or (($mobs | Where-Object { $_ -match "\t[0-4]m " }).Count -gt 0))
 if ($atWard.Count -eq 0 -or @($atWard -match "hunt=True").Count -ne 0) { $mobs; $st }
 V "tp $($pos[0]) $($pos[1]) $($pos[2])" | Out-Null; Start-Sleep 5
 $mobs = V "mod mobs"
 Check "mobs switch to hunting the exposed player who returns" (($mobs -match "hunt=True").Count -gt 0)
 V "screenshot $out\wave.png" | Out-Null
-for ($i = 0; $i -lt 6; $i++) { V "mod kill" | Out-Null; Start-Sleep 3; if ((V "mod status") -match "state=Won") { break } }
+for ($i = 0; $i -lt 6; $i++) { V "mod kill" | Out-Null; Start-Sleep 3; if ((V "mod status") -match "state=Resting") { break } }
 $st = V "mod status"
-Check "challenge won when wave is dead" ($st -match "state=Won")
+Check "challenge won when wave is dead (ward rests)" ($st -match "state=Resting")
+Check "rest span drawn from RestMin..RestMax" (($st -join " ") -match "rest=\d+/(\d+)s" -and [int]$Matches[1] -ge 30 -and [int]$Matches[1] -le 36)
 Check "completed counter incremented" ($st -match "completed=1")
 $items = V "items 10"
 Check "rewards dropped at ward (coins + materials)" (($items -match "^Coins") -and ($items -match "^Flint|^LeatherScraps"))
@@ -88,20 +92,73 @@ Check "removed trophy clears key" (-not ((V "keys") -match "bdw_hung_eikthyr"))
 
 # ---- phase A2: HUD, one ward per player, rebuild-to-move, lock during wave ----
 Write-Host "`n== Phase A2: HUD + one ward per player"
+GoToWard                                            # pause and interact need the player within reach (5 m)
+V "mod cfg CountdownMinutes 1" | Out-Null           # hold the next countdown open long enough to test start-now
 $hud = V "mod hud"
-Check "HUD visible and shows finished ward" ($hud -match "visible=True" -and $hud -match "Ward defended")
+Check "HUD visible and shows the resting ward" ($hud -match "visible=True" -and $hud -match "Your ward: defended, next in \d\d:\d\d")
+Check "resting ward keeps its map pin" ((V "mod pins") -match "count=1")
+# Pause: the hotkey path (same code) while resting; timers must stand still.
+V "mod cfg PausableWards true" | Out-Null
+Check "pause toggles through the hotkey path" ((V "mod pause") -match "^toggled")
+Start-Sleep 3
+$a = (V "mod status") -join " "; Start-Sleep 4; $b = (V "mod status") -join " "
+$ra = if ($a -match "rest=(\d+)/") { $Matches[1] } else { "a" }; $rb = if ($b -match "rest=(\d+)/") { $Matches[1] } else { "b" }
+Check "paused ward's rest timer does not advance" (($a -match "paused=True") -and ($ra -eq $rb))
+Check "HUD shows the pause" ((V "mod hud") -match "\(paused\)")
+Check "hover text offers resume" ((V "mod interact") -match "Resume the ward")
+V "mod pause" | Out-Null; Start-Sleep 2
+Check "resumed ward continues" ((V "mod status") -match "paused=False")
+V "mod cfg PausableWards false" | Out-Null
+Check "pause refused when PausableWards is off" ((V "mod pause") -match "disabled")
+for ($i = 0; $i -lt 16; $i++) { Start-Sleep 3; if ((V "mod status") -match "state=Countdown") { break } }
+Check "ward re-arms after the rest" ((V "mod status") -match "state=Countdown")
+# Start now: E on the ward during the countdown starts the wave (StartNow, default on); the vanilla toggle is skipped.
+Check "hover text offers starting the wave" ((V "mod hover") -match "Start the wave now")
+$ia = V "mod interact"
+Start-Sleep 3
+Check "interacting during the countdown starts the wave" (($ia -match "result=True") -and ((V "mod status") -match "state=Active"))
+for ($i = 0; $i -lt 6; $i++) { V "mod kill" | Out-Null; Start-Sleep 3; if ((V "mod status") -match "state=Resting") { break } }
+Check "early wave won" ((V "mod status") -match "state=Resting")
+V "mod cfg StartNow false" | Out-Null
+for ($i = 0; $i -lt 16; $i++) { Start-Sleep 3; if ((V "mod status") -match "state=Countdown") { break } }
+Check "interact with StartNow off does not start the wave" (((V "mod interact") -match "result=") -and ((V "mod status") -match "state=Countdown"))
+V "mod cfg StartNow true" | Out-Null
 Check "rebuilding through the hammer path succeeds" ((V "build BaseDefenseWard 4 5") -match "^built")
 Start-Sleep 3
 Check "previous ward removed (only one per player)" ((V "mod wards") -match "^count=1 removed=1")
-Check "HUD shows countdown to next wave" ((V "mod hud") -match "Wave in \d\d:\d\d")
+Check "HUD shows countdown to next wave" ((V "mod hud") -match "Your ward: wave in \d\d:\d\d")
+Check "running ward has a map pin" ((V "mod pins") -match "count=1")
 V "mod skip 60" | Out-Null; Start-Sleep 4
 Check "moved ward's wave starts" ((V "mod status") -match "state=Active")
-Check "HUD shows wave in progress" ((V "mod hud") -match "Wave! hold \d\d:\d\d")
+Check "HUD shows wave in progress" ((V "mod hud") -match "Your ward: hold \d\d:\d\d")
 Check "placement refused while wave in progress" (((V "tryplace BaseDefenseWard") -match "result=False") -and ((V "mod wards") -match "blocked=1"))
 Check "still exactly one ward" ((V "mod wards") -match "^count=1 ")
 V "screenshot $out\hud_wave.png" | Out-Null
-for ($i = 0; $i -lt 6; $i++) { V "mod kill" | Out-Null; Start-Sleep 3; if ((V "mod status") -match "state=Won") { break } }
-Check "moved ward's wave won" ((V "mod status") -match "state=Won")
+for ($i = 0; $i -lt 6; $i++) { V "mod kill" | Out-Null; Start-Sleep 3; if ((V "mod status") -match "state=Resting") { break } }
+Check "moved ward's wave won" ((V "mod status") -match "state=Resting")
+Start-Sleep 3
+$board = V "mod board"
+Check "board lists the ward with its builder and a running rest timer" ($board -match "name=devtest state=Resting paused=False running=True")
+
+# ---- phase A3: another player's ward: stacked HUD rows, map pin, no collision with vanilla HUD ----
+Write-Host "`n== Phase A3: multiplayer HUD rows + map pins"
+Check "placed a second ward" ((V "place BaseDefenseWard 6 4") -match "zdo=True")
+Start-Sleep 2
+Check "reassigned it to another player" ((V "mod setcreator 424242") -match "creator=424242")
+Start-Sleep 3
+$hud = V "mod hud"
+Check "HUD shows two rows (mine + theirs)" ($hud -match "rows=2" -and $hud -match "Your ward: (defended|wave in)" -and $hud -match "Viking: wave in \d\d:\d\d")
+$tops = @(((($hud -split "tops=")[1] -split " ")[0]) -split ",")
+Check "rows are stacked, not overlapping" ($tops.Count -eq 2 -and ([math]::Abs([float]$tops[0] - [float]$tops[1]) -ge 36))
+$pins = V "mod pins"
+Check "both wards have map pins, the other one named after its builder" (($pins -match "count=2") -and ($pins -match "Viking's ward") -and ($pins -match "devtest's ward"))
+Check "offline builder's countdown is not running" ((V "mod board") -match "creator=424242 name=Viking state=Countdown paused=False running=False")
+$rects = V "mod hudrects"
+$hits = @($rects | Where-Object { $_ -match "^(minimap|statusEffects|eventBar|messageTopLeft|messageCenter|healthPanel|guardianPower|buildHud|saveIcon|betaText)`tactive=True" -and $_ -match "overlapsRows=Row" })
+Check "HUD rows do not overlap vanilla HUD elements" ($hits.Count -eq 0); if ($hits) { $rects }
+V "screenshot $out\hud_rows.png" | Out-Null
+V "destroy basedefense" | Out-Null; Start-Sleep 5   # the "other player's" ward, nearest to the player
+Check "destroyed ward's pin and row disappear" (((V "mod pins") -match "count=1") -and ((V "mod hud") -match "rows=1"))
 
 # ---- phase B: loss + world deletion ----
 Write-Host "`n== Phase B: loss with DeleteWorldOnLoss"

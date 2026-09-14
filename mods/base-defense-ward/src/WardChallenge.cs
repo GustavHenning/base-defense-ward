@@ -6,7 +6,9 @@ using UnityEngine;
 
 namespace BaseDefenseWard
 {
-    public enum ChallengeState { Idle = 0, Countdown = 1, Active = 2, Won = 3, Lost = 4, Cancelled = 5 }
+    // Idle -> Countdown -> Active -> Resting -> Countdown -> ... ; Lost when the ward falls mid-wave.
+    // Won is kept for old saves; a ward found in that state simply rests and re-arms.
+    public enum ChallengeState { Idle = 0, Countdown = 1, Active = 2, Won = 3, Lost = 4, Cancelled = 5, Resting = 6 }
 
     // Attached to the ward prefab. Logic runs only on the ZDO owner (the server in multiplayer).
     public class WardChallenge : MonoBehaviour
@@ -15,6 +17,9 @@ namespace BaseDefenseWard
         // Timers accumulate only while the ward is simulated (owner ticking), so they pause when nobody is online or nearby.
         public static readonly int HElapsed = "bdw_elapsed".GetStableHashCode();
         public static readonly int HWaveElapsed = "bdw_waveelapsed".GetStableHashCode();
+        public static readonly int HRestElapsed = "bdw_restelapsed".GetStableHashCode();
+        public static readonly int HRestFor = "bdw_restfor".GetStableHashCode();     // seconds this rest lasts
+        public static readonly int HPaused = "bdw_paused".GetStableHashCode();
         static readonly int HTier = "bdw_tier".GetStableHashCode();
         static readonly int HMobCount = "bdw_mobcount".GetStableHashCode();
         public static readonly int HMobWard = "bdw_ward".GetStableHashCode(); // set on spawned mobs: owning ward id
@@ -36,6 +41,8 @@ namespace BaseDefenseWard
             _wnt = GetComponent<WearNTear>();
             if (_wnt != null) _wnt.m_onDestroyed = (Action)Delegate.Combine(_wnt.m_onDestroyed, new Action(OnDestroyed));
             _id = _nview.GetZDO().m_uid.ToString();
+            _nview.Register("BDW_StartNow", new Action<long>(RPC_StartNow));
+            _nview.Register("BDW_TogglePause", new Action<long>(RPC_TogglePause));
             All.Add(this);
             InvokeRepeating(nameof(Tick), 1f, 1f);
         }
@@ -49,13 +56,37 @@ namespace BaseDefenseWard
         public int Tier => _nview.GetZDO().GetInt(HTier, 0);
         public float Elapsed => _nview.GetZDO().GetFloat(HElapsed, 0f);
         public float WaveElapsed => _nview.GetZDO().GetFloat(HWaveElapsed, 0f);
+        public float RestElapsed => _nview.GetZDO().GetFloat(HRestElapsed, 0f);
+        public float RestFor => _nview.GetZDO().GetFloat(HRestFor, 0f);
+        public bool Paused => _nview.GetZDO().GetBool(HPaused, false);
+        public ZNetView View => _nview;
 
         public string Status()
         {
             var z = _nview.GetZDO();
-            return $"state={State} tier={Tier} owner={_nview.IsOwner()} hp={(_wnt != null ? _wnt.GetHealthPercentage() * 100f : -1f):0}% elapsed={Elapsed:0}s " +
-                   $"waveElapsed={WaveElapsed:0}s alive={AliveMobs().Count} pending={_toSpawn.Count} planned={z.GetInt(HMobCount)}";
+            return $"state={State} tier={Tier} owner={_nview.IsOwner()} paused={Paused} hp={(_wnt != null ? _wnt.GetHealthPercentage() * 100f : -1f):0}% elapsed={Elapsed:0}s " +
+                   $"waveElapsed={WaveElapsed:0}s rest={RestElapsed:0}/{RestFor:0}s alive={AliveMobs().Count} pending={_toSpawn.Count} planned={z.GetInt(HMobCount)}";
         }
+
+        // ---- requests from any peer, executed by the owner ----
+        void RPC_StartNow(long sender)
+        {
+            if (!_nview.IsOwner() || State != ChallengeState.Countdown) return;
+            Plugin.Log.LogInfo($"Wave started early by request: ward={_id}");
+            StartWave();
+        }
+
+        void RPC_TogglePause(long sender)
+        {
+            if (!_nview.IsOwner() || State == ChallengeState.Active) return;
+            bool now = !Paused;
+            _nview.GetZDO().Set(HPaused, now);
+            Plugin.Log.LogInfo($"Ward {(now ? "paused" : "resumed")}: ward={_id}");
+            Say(now ? "Base Defense Ward paused." : "Base Defense Ward resumed.");
+        }
+
+        public void RequestStartNow() => _nview.InvokeRPC("BDW_StartNow");
+        public void RequestTogglePause() => _nview.InvokeRPC("BDW_TogglePause");
 
         void Tick()
         {
@@ -65,8 +96,26 @@ namespace BaseDefenseWard
             // restart, ownership change) adds nothing, so timers pause instead of expiring while players are away.
             float dt = _lastTick < 0 ? 0f : Mathf.Clamp((float)(Now - _lastTick), 0f, 2f);
             _lastTick = Now;
+            if (Paused && State != ChallengeState.Active) dt = 0f;   // a paused ward's countdown and rest stand still
+            // Countdown and rest belong to the builder: they only run while that player is logged in (the server
+            // advances them for unloaded wards; here we cover the loaded case, so the rule holds at any distance).
+            if ((State == ChallengeState.Countdown || State == ChallengeState.Resting) && !WardBoard.IsOnline(z.GetLong(ZDOVars.s_creator))) dt = 0f;
             switch (State)
             {
+                case ChallengeState.Won:   // finished under an older version: treat like a fresh win
+                    StartRest();
+                    break;
+
+                case ChallengeState.Resting:
+                    z.Set(HRestElapsed, RestElapsed + dt);
+                    if (RestElapsed >= RestFor)
+                    {
+                        z.Set(HElapsed, 0f);
+                        SetState(ChallengeState.Countdown);
+                        Say($"The ward stirs. The next wave arrives in {Cfg.CountdownMinutes.Value:0.#} minutes.");
+                    }
+                    break;
+
                 case ChallengeState.Idle:
                     z.Set(HElapsed, 0f);
                     SetState(ChallengeState.Countdown);
@@ -181,13 +230,25 @@ namespace BaseDefenseWard
 
         void Win(string why)
         {
-            SetState(ChallengeState.Won);
             int completed = Progress.Completed();
             var reward = MobPool.RewardFor(Tier, completed);
             Progress.SetCompleted(completed + 1);
             foreach (var (prefab, amount) in reward) DropReward(prefab, amount);
             Plugin.Log.LogInfo($"Challenge won ({why}): ward={_id} completed->{completed + 1} reward={string.Join(",", reward.Select(r => r.prefab + "x" + r.amount))}");
             Say($"Ward defended! {why}. Rewards have been dropped at the ward.");
+            StartRest();
+        }
+
+        // Between challenges the ward rests for a random span; when it ends the next countdown starts.
+        void StartRest()
+        {
+            float lo = Mathf.Max(0f, Cfg.RestMinMinutes.Value), hi = Mathf.Max(lo, Cfg.RestMaxMinutes.Value);
+            float rest = (lo + (float)Rng.NextDouble() * (hi - lo)) * 60f;
+            var z = _nview.GetZDO();
+            z.Set(HRestFor, rest);
+            z.Set(HRestElapsed, 0f);
+            SetState(ChallengeState.Resting);
+            Plugin.Log.LogInfo($"Ward resting for {rest:0}s: ward={_id}");
         }
 
         void DropReward(string prefab, int amount)

@@ -37,3 +37,13 @@ What must be true before a release. `tests\e2e.ps1` implements every line agains
 - [ ] No `[Error` lines in the BepInEx log for the whole run.
 - [ ] `skills\mod-publishing\scripts\package.ps1` produces the zip and
       `install-to-profile.ps1 -Clean -Launch` loads it in a clean profile.
+
+## Rest, pause, start now, distance (0.1.1)
+- [ ] A defended ward enters Resting with a rest span inside RestMin..RestMax, then re-arms into Countdown.
+- [ ] With PausableWards, the hotkey path pauses the nearest ward in reach: timers stand still, HUD and hover
+      text say "paused", resume works; refused when the option is off or a wave is active.
+- [ ] With StartNow, E on the ward during the countdown starts the wave (hover text says so); with it off,
+      E keeps the vanilla toggle and the countdown continues.
+- [ ] The server's ward board lists every ward with builder name, state, paused and running flags; a ward whose
+      builder is offline has running=False; HUD rows and pins are built from the board (any distance).
+- [ ] A destroyed ward's pin and HUD row disappear.
