@@ -53,13 +53,13 @@ namespace BaseDefenseWard
                     var w = p != null ? WardChallenge.Nearest(p.transform.position) : WardChallenge.All.FirstOrDefault();
                     return (w == null ? "no ward nearby" : w.Status()) + "\n" + Progress.Summary() + "\n" + Deadline.Status();
                 }
-                case "skip": // skip <seconds>: fast-forward this ward's timers by pushing its start stamps back
+                case "skip": // skip <seconds>: fast-forward the current timer of this ward
                 {
                     var w = WardChallenge.Nearest(p.transform.position);
                     if (w == null) return "no ward nearby";
                     long s = long.Parse(parts[1]);
                     var z = w.GetComponent<ZNetView>().GetZDO();
-                    foreach (var h in new[] { "bdw_start", "bdw_wavestart" }) { int hh = h.GetStableHashCode(); if (z.GetLong(hh) > 0) z.Set(hh, z.GetLong(hh) - s); }
+                    int hs = w.State == ChallengeState.Active ? WardChallenge.HWaveElapsed : WardChallenge.HElapsed; z.Set(hs, z.GetFloat(hs, 0f) + s);
                     return "skipped " + s;
                 }
                 case "mobs":

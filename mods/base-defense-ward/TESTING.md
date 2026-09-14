@@ -11,6 +11,8 @@ What must be true before a release. `tests\e2e.ps1` implements every line agains
 
 ## Wave
 - [ ] After the countdown the state becomes Active and mobs spawn on the spawn ring.
+- [ ] Timers are accumulated simulated time (`bdw_elapsed`, `bdw_waveelapsed` ZDO floats); `mod skip` advances them
+      and the HUD counts down from them, so they pause while the ward is unowned or the game is closed.
 - [ ] With no exposed player in hunt range, mobs at the ward do not hunt and they damage the ward (or stand at it).
 - [ ] When an exposed player comes back into range, mobs switch to hunting.
 - [ ] Killing every mob wins the challenge, increments the completed counter and drops coins plus tier materials at the ward.

@@ -8,7 +8,8 @@ spawns around your base and comes for the ward. Hold it and you are rewarded; lo
 
 ## How it plays
 
-- **Countdown** starts the moment the ward is built (default 10 minutes). A panel left of the minimap shows the
+- **Countdown** starts the moment the ward is built (default 10 minutes). It only runs while the ward is
+  being simulated, so it pauses when you log out or nobody is near it, also on dedicated servers. A panel left of the minimap shows the
   time to the next wave, the time left to hold during a wave, or the build deadline if one is configured.
 - **The wave** spawns at a distance from the ward (default 55 m, outside the ward's 32 m radius) and grows with
   every challenge this world has already completed.

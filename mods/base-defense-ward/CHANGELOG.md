@@ -10,5 +10,7 @@ First public release.
 - Mob pool tiers unlocked by boss trophies hung on the sacrificial stones.
 - One ward per player; rebuild to move it, locked while a wave is in progress.
 - HUD panel left of the minimap with the current countdown.
+- Countdown and hold timers only advance while the ward is simulated: they pause while everyone is offline or
+  away from the ward, on servers too.
 - Options: timers, wave size, rewards, hunt range, boss keys, custom mob pools, and the opt-in
   DeleteWorldOnLoss and BuildDeadlineMinutes consequences (both off by default).

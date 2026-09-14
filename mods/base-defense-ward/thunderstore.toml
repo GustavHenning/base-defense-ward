@@ -8,7 +8,7 @@ schemaVersion = "0.0.1"
 repository = "https://thunderstore.io"
 
 [package]
-namespace = "GustavHenning"
+namespace = "munnas"
 name = "BaseDefenseWard"
 versionNumber = "0.1.0"
 description = "Tower defence for your base: build the ward, survive the wave that comes for it, earn tiered rewards."

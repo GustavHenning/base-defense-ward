@@ -4,7 +4,7 @@ Valheim mods by Gustav Henning, plus the tooling used to build and test them aga
 
 | Mod | What it does | Get it |
 | --- | --- | --- |
-| [Base Defense Ward](mods/base-defense-ward/) | Build a ward, survive the wave that comes for it, earn tiered rewards. Mobs hunt exposed players and ignore sheltered ones. | Thunderstore: `GustavHenning-BaseDefenseWard` · Nexus Mods: *Base Defense Ward* · [Releases](https://github.com/GustavHenning/base-defense-ward/releases) |
+| [Base Defense Ward](mods/base-defense-ward/) | Build a ward, survive the wave that comes for it, earn tiered rewards. Mobs hunt exposed players and ignore sheltered ones. | [Thunderstore](https://thunderstore.io/c/valheim/p/munnas/BaseDefenseWard/) · Nexus Mods: *Base Defense Ward* · [Releases](https://github.com/GustavHenning/base-defense-ward/releases) |
 
 ![The Base Defense Ward](docs/ward.jpg)
 

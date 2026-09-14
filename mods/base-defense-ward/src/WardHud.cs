@@ -13,8 +13,6 @@ namespace BaseDefenseWard
     {
         public static WardHud Instance;
         static readonly int HState = "bdw_state".GetStableHashCode();
-        static readonly int HStart = "bdw_start".GetStableHashCode();
-        static readonly int HWaveStart = "bdw_wavestart".GetStableHashCode();
 
         RectTransform _root;
         Image _icon;
@@ -110,12 +108,12 @@ namespace BaseDefenseWard
                     case ChallengeState.Idle:
                     case ChallengeState.Countdown:
                     {
-                        double left = Cfg.CountdownMinutes.Value * 60.0 - (now - _myWard.GetLong(HStart));
+                        double left = Cfg.CountdownMinutes.Value * 60.0 - _myWard.GetFloat(WardChallenge.HElapsed, 0f);
                         line = "Wave in " + Fmt(left); break;
                     }
                     case ChallengeState.Active:
                     {
-                        double left = Cfg.WaveTimeLimitMinutes.Value * 60.0 - (now - _myWard.GetLong(HWaveStart));
+                        double left = Cfg.WaveTimeLimitMinutes.Value * 60.0 - _myWard.GetFloat(WardChallenge.HWaveElapsed, 0f);
                         line = "Wave! hold " + Fmt(left); break;
                     }
                     case ChallengeState.Won: line = "Ward defended"; break;

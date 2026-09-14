@@ -12,8 +12,9 @@ namespace BaseDefenseWard
     public class WardChallenge : MonoBehaviour
     {
         static readonly int HState = "bdw_state".GetStableHashCode();
-        static readonly int HStart = "bdw_start".GetStableHashCode();
-        static readonly int HWaveStart = "bdw_wavestart".GetStableHashCode();
+        // Timers accumulate only while the ward is simulated (owner ticking), so they pause when nobody is online or nearby.
+        public static readonly int HElapsed = "bdw_elapsed".GetStableHashCode();
+        public static readonly int HWaveElapsed = "bdw_waveelapsed".GetStableHashCode();
         static readonly int HTier = "bdw_tier".GetStableHashCode();
         static readonly int HMobCount = "bdw_mobcount".GetStableHashCode();
         public static readonly int HMobWard = "bdw_ward".GetStableHashCode(); // set on spawned mobs: owning ward id
@@ -26,6 +27,7 @@ namespace BaseDefenseWard
         readonly Queue<string> _toSpawn = new Queue<string>();
         float _spawnTimer;
         string _id;
+        double _lastTick = -1;
 
         void Awake()
         {
@@ -45,37 +47,44 @@ namespace BaseDefenseWard
         void SetState(ChallengeState s) => _nview.GetZDO().Set(HState, (int)s);
         double Now => ZNet.instance.GetTimeSeconds();
         public int Tier => _nview.GetZDO().GetInt(HTier, 0);
+        public float Elapsed => _nview.GetZDO().GetFloat(HElapsed, 0f);
+        public float WaveElapsed => _nview.GetZDO().GetFloat(HWaveElapsed, 0f);
 
         public string Status()
         {
             var z = _nview.GetZDO();
-            double start = z.GetLong(HStart), wave = z.GetLong(HWaveStart);
-            return $"state={State} tier={Tier} owner={_nview.IsOwner()} hp={(_wnt != null ? _wnt.GetHealthPercentage() * 100f : -1f):0}% elapsed={(start > 0 ? Now - start : 0):0}s " +
-                   $"waveElapsed={(wave > 0 ? Now - wave : 0):0}s alive={AliveMobs().Count} pending={_toSpawn.Count} planned={z.GetInt(HMobCount)}";
+            return $"state={State} tier={Tier} owner={_nview.IsOwner()} hp={(_wnt != null ? _wnt.GetHealthPercentage() * 100f : -1f):0}% elapsed={Elapsed:0}s " +
+                   $"waveElapsed={WaveElapsed:0}s alive={AliveMobs().Count} pending={_toSpawn.Count} planned={z.GetInt(HMobCount)}";
         }
 
         void Tick()
         {
-            if (!_nview.IsValid() || !_nview.IsOwner() || ZNet.instance == null) return;
+            if (!_nview.IsValid() || !_nview.IsOwner() || ZNet.instance == null) { _lastTick = -1; return; }
             var z = _nview.GetZDO();
+            // Only time that passed while this owner was ticking counts. A gap (relog, nobody nearby, server
+            // restart, ownership change) adds nothing, so timers pause instead of expiring while players are away.
+            float dt = _lastTick < 0 ? 0f : Mathf.Clamp((float)(Now - _lastTick), 0f, 2f);
+            _lastTick = Now;
             switch (State)
             {
                 case ChallengeState.Idle:
-                    z.Set(HStart, (long)Now);
+                    z.Set(HElapsed, 0f);
                     SetState(ChallengeState.Countdown);
                     if (!Progress.Has(Progress.BuiltKey)) ZoneSystem.instance.SetGlobalKey(Progress.BuiltKey);
                     Say($"Base Defense Ward armed. The wave arrives in {Cfg.CountdownMinutes.Value:0.#} minutes.");
                     break;
 
                 case ChallengeState.Countdown:
-                    if (Now - z.GetLong(HStart) >= Cfg.CountdownMinutes.Value * 60.0) StartWave();
+                    z.Set(HElapsed, Elapsed + dt);
+                    if (Elapsed >= Cfg.CountdownMinutes.Value * 60f) StartWave();
                     break;
 
                 case ChallengeState.Active:
+                    z.Set(HWaveElapsed, WaveElapsed + dt);
                     PumpSpawns();
                     var alive = AliveMobs();
                     DirectMobs(alive);
-                    bool timeUp = Now - z.GetLong(HWaveStart) >= Cfg.WaveTimeLimitMinutes.Value * 60.0;
+                    bool timeUp = WaveElapsed >= Cfg.WaveTimeLimitMinutes.Value * 60f;
                     if (_toSpawn.Count == 0 && alive.Count == 0) Win("Wave destroyed");
                     else if (timeUp) { Despawn(alive); Win("Ward held until dawn"); }
                     break;
@@ -91,7 +100,7 @@ namespace BaseDefenseWard
             foreach (var p in MobPool.Sample(count, tier, completed, Rng)) _toSpawn.Enqueue(p);
             z.Set(HTier, tier);
             z.Set(HMobCount, _toSpawn.Count);
-            z.Set(HWaveStart, (long)Now);
+            z.Set(HWaveElapsed, 0f);
             SetState(ChallengeState.Active);
             Plugin.Log.LogInfo($"Wave start: ward={_id} tier={tier} completed={completed} mobs={string.Join(",", _toSpawn)}");
             Say("The wave is here! Defend the ward!");
