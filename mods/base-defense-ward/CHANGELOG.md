@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.2
+- Mod page README shows screenshots now that the repository is public. No gameplay changes.
+
 ## 0.1.1
 - After a defended wave the ward rests for a random span (RestMinMinutes..RestMaxMinutes, default 30-120 min)
   and then re-arms; waves keep growing with every completed challenge.
